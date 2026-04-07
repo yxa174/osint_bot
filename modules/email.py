@@ -1,14 +1,15 @@
-"""Модуль для поиска по email — расширенный."""
+"""Модуль для поиска по email — с реальными API-запросами."""
 
 import re
 import logging
-import asyncio
+import hashlib
+import json
 
 log = logging.getLogger("OSINTBot")
 
 
 def validate_email(text: str) -> str | None:
-    """Валидирует email адрес."""
+    """Валидирует email."""
     text = text.strip()
     pattern = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
     if re.match(pattern, text):
@@ -16,29 +17,10 @@ def validate_email(text: str) -> str | None:
     return None
 
 
-def parse_email(email: str) -> dict:
-    """Расширенный парсинг email."""
+def parse_email_local(email: str) -> dict:
+    """Локальный парсинг email."""
     local_part, domain = email.rsplit("@", 1)
 
-    result = {
-        "email": email,
-        "local_part": local_part,
-        "domain": domain,
-        "provider": detect_provider(domain),
-        "is_disposable": is_disposable_domain(domain),
-        "is_free": is_free_provider(domain),
-        "is_role_account": is_role_account(local_part),
-        "gravatar": f"https://www.gravatar.com/avatar/{hash_email(email)}?d=404&s=200",
-        "google_account": domain in ("gmail.com", "googlemail.com"),
-        "microsoft_account": domain in ("hotmail.com", "outlook.com", "live.com", "msn.com"),
-        "yandex_account": domain in ("yandex.ru", "ya.ru", "yandex.com", "yandex.by", "yandex.kz"),
-        "mail_ru_account": domain in ("mail.ru", "list.ru", "bk.ru", "inbox.ru"),
-    }
-
-    return result
-
-
-def detect_provider(domain: str) -> str:
     providers = {
         "gmail.com": "Google (Gmail)", "googlemail.com": "Google (Gmail)",
         "yahoo.com": "Yahoo Mail", "yahoo.ru": "Yahoo Mail",
@@ -57,10 +39,7 @@ def detect_provider(domain: str) -> str:
         "duck.com": "DuckDuckGo Email", "simplelogin.com": "SimpleLogin",
         "anonaddy.com": "AnonAddy",
     }
-    return providers.get(domain.lower(), f"Кастомный домен ({domain})")
 
-
-def is_disposable_domain(domain: str) -> bool:
     disposable = {
         "tempmail.com", "throwaway.email", "guerrillamail.com",
         "mailinator.com", "yopmail.com", "sharklasers.com",
@@ -69,71 +48,44 @@ def is_disposable_domain(domain: str) -> bool:
         "10minutemail.com", "temp-mail.org", "burnermail.io",
         "maildrop.cc", "getairmail.com", "mailnesia.com",
     }
-    return domain.lower() in disposable
 
-
-def is_free_provider(domain: str) -> bool:
-    free = {
+    free_providers = {
         "gmail.com", "yahoo.com", "yahoo.ru", "hotmail.com", "outlook.com",
         "mail.ru", "yandex.ru", "ya.ru", "rambler.ru", "list.ru", "bk.ru",
         "inbox.ru", "icloud.com", "protonmail.com", "live.com", "msn.com",
     }
-    return domain.lower() in free
 
-
-def is_role_account(local_part: str) -> bool:
-    roles = {
+    role_accounts = {
         "admin", "info", "support", "sales", "contact", "help",
         "noreply", "no-reply", "webmaster", "postmaster", "hostmaster",
         "abuse", "security", "billing", "office", "team", "hr",
         "marketing", "press", "media", "legal", "compliance",
     }
-    return local_part.lower().rstrip(".") in roles
 
-
-def hash_email(email: str) -> str:
-    import hashlib
-    return hashlib.md5(email.lower().strip().encode()).hexdigest()
-
-
-def get_email_search_links(email: str) -> dict:
-    """Генерирует ссылки для поиска по email."""
-    from urllib.parse import quote
-    encoded = quote(email, safe="")
+    md5_hash = hashlib.md5(email.lower().strip().encode()).hexdigest()
 
     return {
-        "Поисковики": {
-            "Google": f"https://www.google.com/search?q={encoded}",
-            "Yandex": f"https://yandex.ru/search/?text={encoded}",
-            "DuckDuckGo": f"https://duckduckgo.com/?q={encoded}",
-        },
-        "Утечки": {
-            "Have I Been Pwned": f"https://haveibeenpwned.com/account/{email}",
-            "DeHashed": f"https://dehashed.com/search?query={encoded}",
-            "LeakCheck": f"https://leakcheck.io/check/{encoded}",
-            "SnusBase": "https://snusbase.com/",
-            "Intelligence X": f"https://intelx.io/?s={encoded}",
-        },
-        "Профили": {
-            "Gravatar": f"https://www.gravatar.com/avatar/{hash_email(email)}?d=identicon&s=200",
-            "GitHub": f"https://github.com/search?q={encoded}&type=users",
-            "GitLab": f"https://gitlab.com/search?search={encoded}&nav_source=navbar",
-            "Google Account": f"https://accounts.google.com/accountrestore",
-        },
-        "Верификация": {
-            "EmailHippo": "https://tools.emailhippo.com/email/",
-            "MailTester": f"https://mailtester.com/testmail.php?lang=en&email={encoded}",
-            "VerifyEmail": f"https://verify-email.org/?email={encoded}",
-        },
+        "email": email,
+        "local_part": local_part,
+        "domain": domain,
+        "provider": providers.get(domain.lower(), f"Кастомный домен ({domain})"),
+        "is_disposable": domain.lower() in disposable,
+        "is_free": domain.lower() in free_providers,
+        "is_role_account": local_part.lower().rstrip(".") in role_accounts,
+        "gravatar_url": f"https://www.gravatar.com/avatar/{md5_hash}?d=identicon&s=200",
+        "md5_hash": md5_hash,
+        "google_account": domain.lower() in ("gmail.com", "googlemail.com"),
+        "microsoft_account": domain.lower() in ("hotmail.com", "outlook.com", "live.com", "msn.com"),
+        "yandex_account": domain.lower() in ("yandex.ru", "ya.ru", "yandex.com", "yandex.by", "yandex.kz"),
+        "mail_ru_account": domain.lower() in ("mail.ru", "list.ru", "bk.ru", "inbox.ru"),
     }
 
 
-async def check_email_breaches(email: str, api_key: str | None = None) -> dict:
-    """Проверка в утечках через Have I Been Pwned API."""
+async def check_hibp(email: str, api_key: str) -> dict:
+    """Have I Been Pwned — проверка утечек."""
     result = {"breaches": [], "pastes": [], "error": None}
-
     if not api_key:
-        result["error"] = "HIBP API ключ не указан"
+        result["error"] = "API ключ не указан"
         return result
 
     try:
@@ -155,7 +107,7 @@ async def check_email_breaches(email: str, api_key: str | None = None) -> dict:
                         "data_classes": b.get("DataClasses", []),
                         "description": b.get("Description", ""),
                     }
-                    for b in breaches[:10]
+                    for b in breaches[:15]
                 ]
 
             # Пасты
@@ -180,40 +132,207 @@ async def check_email_breaches(email: str, api_key: str | None = None) -> dict:
                 result["error"] = f"Ошибка API: {resp.status_code}"
 
     except Exception as e:
-        log.error(f"Ошибка проверки email в утечках: {e}")
+        log.error(f"Ошибка HIBP: {e}")
         result["error"] = str(e)
 
     return result
 
 
-def format_email_report(email: str, breach_data: dict | None = None) -> str:
-    """Расширенный отчёт по email."""
-    data = parse_email(email)
-    search_links = get_email_search_links(email)
+async def check_emailrep(email: str) -> dict:
+    """EmailRep.io — репутация email (бесплатно, без ключа)."""
+    result = {}
+    try:
+        import httpx
+        url = f"https://emailrep.io/{email}"
+        headers = {"Accept": "application/json", "User-Agent": "OSINT-Bot/1.0"}
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(url, headers=headers)
+            if resp.status_code == 200:
+                data = resp.json()
+                result = {
+                    "reputation": data.get("reputation", "Unknown"),
+                    "suspicious": data.get("suspicious", False),
+                    "references": data.get("references", 0),
+                    "details": {
+                        "blacklisted": data.get("details", {}).get("blacklisted", False),
+                        "malicious_activity": data.get("details", {}).get("malicious_activity", False),
+                        "recent_abuse": data.get("details", {}).get("recent_abuse", False),
+                        "fraud": data.get("details", {}).get("fraud", False),
+                        "spam": data.get("details", {}).get("spam", False),
+                        "spam_filter": data.get("details", {}).get("spam_filter", False),
+                        "disposable": data.get("details", {}).get("disposable", False),
+                        "has_mx_records": data.get("details", {}).get("has_mx_records", False),
+                        "domain_created": data.get("details", {}).get("domain_created", "Unknown"),
+                        "domain_age_days": data.get("details", {}).get("domain_age_days", "Unknown"),
+                        "free_provider": data.get("details", {}).get("free_provider", False),
+                    },
+                }
+    except Exception as e:
+        log.debug(f"EmailRep error: {e}")
 
+    return result
+
+
+async def check_hunter_domain(domain: str, api_key: str) -> dict:
+    """Hunter.io — информация о домене."""
+    result = {}
+    if not api_key:
+        return result
+
+    try:
+        import httpx
+        url = f"https://api.hunter.io/v2/domain-search?domain={domain}&api_key={api_key}"
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(url)
+            if resp.status_code == 200:
+                data = resp.json().get("data", {})
+                result = {
+                    "domain": data.get("domain", ""),
+                    "org_name": data.get("organization", ""),
+                    "emails_found": data.get("total", 0),
+                    "emails": data.get("emails", [])[:10],
+                    "pattern": data.get("pattern", ""),
+                    "webmail": data.get("webmail", False),
+                    "disposable": data.get("disposable", False),
+                    "accept_all": data.get("accept_all", False),
+                }
+    except Exception as e:
+        log.debug(f"Hunter.io error: {e}")
+
+    return result
+
+
+async def check_gravatar(email: str) -> dict:
+    """Проверка наличия профиля Gravatar."""
+    result = {"exists": False, "username": "", "display_name": "", "urls": []}
+    try:
+        import httpx
+        md5_hash = hashlib.md5(email.lower().strip().encode()).hexdigest()
+        url = f"https://en.gravatar.com/{md5_hash}.json"
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(url)
+            if resp.status_code == 200:
+                data = resp.json()
+                entry = data.get("entry", [{}])[0]
+                result["exists"] = True
+                result["username"] = entry.get("preferredUsername", "")
+                result["display_name"] = entry.get("displayName", "")
+                result["urls"] = [
+                    {"title": u.get("title", ""), "url": u.get("value", "")}
+                    for u in entry.get("accounts", [])
+                ]
+    except Exception:
+        pass
+
+    return result
+
+
+async def search_email_everywhere(email: str) -> str:
+    """Полный поиск по email с реальными данными."""
+    validated = validate_email(email)
+    if not validated:
+        return "❌ Неверный формат email.\n\nПример: <code>user@gmail.com</code>"
+
+    import config
+
+    # Параллельные запросы
+    local_data = parse_email_local(validated)
+    hibp_task = check_hibp(validated, config.HIBP_API_KEY) if config.HIBP_API_KEY else None
+    emailrep_task = check_emailrep(validated)
+    gravatar_task = check_gravatar(validated)
+
+    # Hunter для кастомных доменов
+    hunter_task = None
+    if config.HUNTER_API_KEY and not local_data["is_free"]:
+        hunter_task = check_hunter_domain(local_data["domain"], config.HUNTER_API_KEY)
+
+    # Ждём все запросы
+    tasks = [emailrep_task, gravatar_task]
+    if hibp_task:
+        tasks.append(hibp_task)
+    if hunter_task:
+        tasks.append(hunter_task)
+
+    results = await __import__("asyncio").gather(*tasks, return_exceptions=True)
+
+    emailrep_data = results[0] if not isinstance(results[0], Exception) else {}
+    gravatar_data = results[1] if not isinstance(results[1], Exception) else {}
+    hibp_data = results[2] if not isinstance(results[2], Exception) else {} if hibp_task else {}
+    hunter_data = results[3] if not isinstance(results[3], Exception) else {} if hunter_task else {}
+
+    # Формируем отчёт
     report = f"📧 <b>Расширенный поиск по email</b>\n\n"
-    report += f"📮 <b>Email:</b> <code>{data['email']}</code>\n"
-    report += f"👤 <b>Локальная часть:</b> <code>{data['local_part']}</code>\n"
-    report += f"🌐 <b>Домен:</b> <code>{data['domain']}</code>\n"
-    report += f"🏢 <b>Провайдер:</b> {data['provider']}\n"
-    report += f"🆓 <b>Бесплатный:</b> {'Да' if data['is_free'] else 'Нет (корпоративный)'}\n"
-    report += f"⚠️ <b>Временный:</b> {'Да' if data['is_disposable'] else 'Нет'}\n"
-    report += f"👔 <b>Ролевой:</b> {'Да' if data['is_role_account'] else 'Нет'}\n"
-    report += f"🖼 <b>Gravatar:</b> <a href=\"{data['gravatar']}\">Проверить</a>\n"
+    report += f"📮 <b>Email:</b> <code>{validated}</code>\n"
+    report += f"👤 <b>Локальная часть:</b> <code>{local_data['local_part']}</code>\n"
+    report += f"🌐 <b>Домен:</b> <code>{local_data['domain']}</code>\n"
+    report += f"🏢 <b>Провайдер:</b> {local_data['provider']}\n"
+    report += f"🆓 <b>Бесплатный:</b> {'Да' if local_data['is_free'] else 'Нет (корпоративный)'}\n"
+    report += f"⚠️ <b>Временный:</b> {'Да' if local_data['is_disposable'] else 'Нет'}\n"
+    report += f"👔 <b>Ролевой:</b> {'Да' if local_data['is_role_account'] else 'Нет'}\n"
 
-    # Привязка к экосистемам
+    # Экосистемы
     ecosystems = []
-    if data["google_account"]: ecosystems.append("Google")
-    if data["microsoft_account"]: ecosystems.append("Microsoft")
-    if data["yandex_account"]: ecosystems.append("Яндекс")
-    if data["mail_ru_account"]: ecosystems.append("Mail.ru")
+    if local_data["google_account"]: ecosystems.append("Google")
+    if local_data["microsoft_account"]: ecosystems.append("Microsoft")
+    if local_data["yandex_account"]: ecosystems.append("Яндекс")
+    if local_data["mail_ru_account"]: ecosystems.append("Mail.ru")
     if ecosystems:
         report += f"\n🔗 <b>Экосистемы:</b> {', '.join(ecosystems)}\n"
 
-    # Утечки
-    if breach_data:
-        breaches = breach_data.get("breaches", [])
-        pastes = breach_data.get("pastes", [])
+    # Gravatar
+    if gravatar_data.get("exists"):
+        report += f"\n🖼 <b>Gravatar:</b>\n"
+        report += f"  👤 Имя: {gravatar_data['display_name']}\n"
+        report += f"  🔗 Username: @{gravatar_data['username']}\n"
+        if gravatar_data.get("urls"):
+            report += f"  📎 Привязанные аккаунты:\n"
+            for acc in gravatar_data["urls"][:5]:
+                if acc.get("title") and acc.get("url"):
+                    report += f"    • <a href=\"{acc['url']}\">{acc['title']}</a>\n"
+    else:
+        report += f"\n🖼 <b>Gravatar:</b> Не найден\n"
+
+    # EmailRep — репутация
+    if emailrep_data:
+        rep = emailrep_data.get("reputation", "Unknown")
+        rep_emoji = {"none": "⚪", "low": "🟡", "medium": "🟠", "high": "🟢"}.get(rep.lower(), "⚪")
+        report += f"\n{rep_emoji} <b>Репутация (EmailRep):</b> {rep}\n"
+        report += f"  📊 Ссылок в сети: {emailrep_data.get('references', 0)}\n"
+        report += f"  ⚠️ Подозрительный: {'Да' if emailrep_data.get('suspicious') else 'Нет'}\n"
+
+        details = emailrep_data.get("details", {})
+        if details.get("blacklisted"):
+            report += f"  🚫 В чёрных списках: Да\n"
+        if details.get("malicious_activity"):
+            report += f"  🔴 Замечен в вредоносной активности\n"
+        if details.get("recent_abuse"):
+            report += f"  🚨 Недавние случаи злоупотребления\n"
+        if details.get("fraud"):
+            report += f"  💣 Связан с мошенничеством\n"
+        if details.get("spam"):
+            report += f"  📬 Отмечен как спам\n"
+        if details.get("domain_age_days") and details["domain_age_days"] != "Unknown":
+            report += f"  📅 Возраст домена: {details['domain_age_days']} дней\n"
+        if details.get("domain_created") and details["domain_created"] != "Unknown":
+            report += f"  📅 Домен создан: {details['domain_created']}\n"
+
+    # Hunter — данные о домене
+    if hunter_data:
+        report += f"\n🏢 <b>Домен (Hunter.io):</b>\n"
+        if hunter_data.get("org_name"):
+            report += f"  Организация: {hunter_data['org_name']}\n"
+        report += f"  Найдено email: {hunter_data.get('emails_found', 0)}\n"
+        if hunter_data.get("pattern"):
+            report += f"  Паттерн: {hunter_data['pattern']}\n"
+        if hunter_data.get("emails"):
+            report += f"  📧 Найденные адреса:\n"
+            for e in hunter_data["emails"][:5]:
+                report += f"    • {e.get('value', '')} ({e.get('position', '')})\n"
+
+    # HIBP — утечки
+    if hibp_data:
+        breaches = hibp_data.get("breaches", [])
+        pastes = hibp_data.get("pastes", [])
 
         if breaches:
             total_pwned = sum(b.get("pwn_count", 0) for b in breaches)
@@ -222,6 +341,9 @@ def format_email_report(email: str, breach_data: dict | None = None) -> str:
                 classes = ", ".join(b.get("data_classes", [])[:5])
                 report += f"\n• <b>{b['name']}</b> ({b['date']})\n"
                 report += f"  Записей: {b['pwn_count']:,}\n"
+                if b.get("description"):
+                    desc = b["description"][:100]
+                    report += f"  {desc}...\n"
                 report += f"  Данные: {classes}\n"
         else:
             report += f"\n✅ <b>Не найден в известных утечках</b>\n"
@@ -231,16 +353,9 @@ def format_email_report(email: str, breach_data: dict | None = None) -> str:
             for p in pastes:
                 report += f"• {p['source']} ({p['date']}) — {p['email_count']:,} email\n"
 
-        if breach_data.get("error"):
-            report += f"\n⚠️ <b>HIBP:</b> {breach_data['error']}\n"
+        if hibp_data.get("error"):
+            report += f"\n⚠️ <b>HIBP:</b> {hibp_data['error']}\n"
 
-    # Ссылки
-    report += f"\n🔎 <b>Сервисы для поиска:</b>\n"
-    for category, links in search_links.items():
-        report += f"\n<b>{category}:</b>\n"
-        for name, url in links.items():
-            report += f"• <a href=\"{url}\">{name}</a>\n"
-
-    report += "\n💡 <i>Нажмите на ссылку для поиска дополнительной информации</i>"
+    report += "\n\n💡 <i>Данные собраны из открытых источников и API</i>"
 
     return report

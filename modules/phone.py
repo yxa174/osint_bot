@@ -1,7 +1,8 @@
-"""Модуль для поиска информации по номеру телефона — расширенный."""
+"""Модуль для поиска информации по номеру телефона — с реальными API."""
 
 import re
 import logging
+import json
 import asyncio
 from urllib.parse import quote
 
@@ -17,52 +18,64 @@ log = logging.getLogger("OSINTBot")
 # Регионы РФ по DEF-коду
 RU_REGIONS = {
     "900": "Мобильный", "901": "Мобильный", "902": "Мобильный",
-    "903": "Москва и МО", "904": "Свердловская обл.", "905": "Москва и МО",
-    "906": "Мобильный", "908": "Ростовская обл.", "909": "Москва и МО",
-    "910": "Центральный ФО", "911": "СЗФО", "912": "Урал", "913": "Сибирь",
-    "914": "Дальний Восток", "915": "Центральный ФО", "916": "Москва и МО",
-    "917": "Поволжье", "918": "Южный ФО", "919": "Поволжье",
-    "920": "Центральный ФО", "921": "СЗФО", "922": "Урал", "923": "Сибирь",
-    "924": "Дальний Восток", "925": "Москва и МО", "926": "Москва и МО",
-    "927": "Поволжье", "928": "Южный ФО", "929": "Москва и МО",
-    "930": "Центральный ФО", "931": "СЗФО", "932": "Урал", "933": "Мобильный",
-    "934": "Дальний Восток", "936": "Москва и МО", "937": "Поволжье",
-    "938": "Южный ФО", "939": "Москва и МО", "949": "Центральный ФО",
-    "950": "Урал / Сибирь", "951": "Мобильный", "952": "СЗФО / Урал",
-    "953": "Сибирь", "958": "Мобильный", "960": "Центральный ФО",
-    "961": "Южный ФО", "962": "Центральный ФО", "963": "Москва и МО",
-    "964": "Сибирь", "965": "Москва и МО", "966": "Москва и МО",
-    "967": "Москва и МО", "968": "Москва и МО", "969": "Москва и МО",
-    "977": "Москва и МО", "978": "Крым", "980": "Центральный ФО",
-    "981": "СЗФО", "982": "Урал", "983": "Сибирь", "984": "Не определено",
-    "985": "Москва и МО", "987": "Поволжье", "988": "Южный ФО",
-    "989": "Южный ФО", "991": "Центральный ФО", "993": "Центральный ФО",
-    "995": "Южный ФО", "996": "Центральный ФО", "997": "Москва и МО",
-    "999": "Москва и МО",
+    "903": "Москва и МО (Beeline)", "904": "Свердловская обл.",
+    "905": "Москва и МО (Beeline)", "906": "Мобильный (Beeline)",
+    "908": "Ростовская обл.", "909": "Москва и МО (Beeline)",
+    "910": "Центральный ФО (MTS)", "911": "СЗФО (MTS)",
+    "912": "Урал (MTS)", "913": "Сибирь (MTS)",
+    "914": "Дальний Восток (MTS)", "915": "Центральный ФО (MTS)",
+    "916": "Москва и МО (MTS)", "917": "Поволжье (MTS)",
+    "918": "Южный ФО (MTS)", "919": "Поволжье (MTS)",
+    "920": "Центральный ФО (MegaFon)", "921": "СЗФО (MegaFon)",
+    "922": "Урал (MegaFon)", "923": "Сибирь (MegaFon)",
+    "924": "Дальний Восток (MegaFon)", "925": "Москва и МО (MegaFon)",
+    "926": "Москва и МО (MegaFon)", "927": "Поволжье (MegaFon)",
+    "928": "Южный ФО (MegaFon)", "929": "Москва и МО (MegaFon)",
+    "930": "Центральный ФО", "931": "СЗФО", "932": "Урал",
+    "933": "Мобильный", "934": "Дальний Восток",
+    "936": "Москва и МО (MegaFon)", "937": "Поволжье (MegaFon)",
+    "938": "Южный ФО (MegaFon)", "939": "Москва и МО",
+    "949": "Центральный ФО", "950": "Урал/Сибирь (Tele2)",
+    "951": "Мобильный (Tele2)", "952": "СЗФО/Урал (Tele2)",
+    "953": "Сибирь (Tele2)", "958": "Мобильный (Tele2)",
+    "960": "Центральный ФО (Tele2)", "961": "Южный ФО (Tele2)",
+    "962": "Центральный ФО (Tele2)", "963": "Москва и МО (Tele2)",
+    "964": "Сибирь (Tele2)", "965": "Москва и МО (Tele2)",
+    "966": "Москва и МО (Tele2)", "967": "Москва и МО (Tele2)",
+    "968": "Москва и МО (Tele2)", "969": "Москва и МО (Tele2)",
+    "977": "Москва и МО (MegaFon)", "978": "Крым",
+    "980": "Центральный ФО (MTS)", "981": "СЗФО (MTS)",
+    "982": "Урал (MTS)", "983": "Сибирь (MTS)",
+    "984": "Не определено", "985": "Москва и МО (MTS)",
+    "987": "Поволжье (MTS)", "988": "Южный ФО (MTS)",
+    "989": "Южный ФО (MTS)", "991": "Центральный ФО (Tele2)",
+    "993": "Центральный ФО (Tele2)", "995": "Южный ФО (Tele2)",
+    "996": "Центральный ФО (Tele2)", "997": "Москва и МО (Yota)",
+    "999": "Москва и МО (Yota)",
 }
 
-# Операторы по диапазонам (упрощённо)
-OPERATORS = {
-    "903": ["Beeline"], "905": ["Beeline"], "906": ["Beeline"],
-    "909": ["Beeline"], "926": ["MegaFon"], "925": ["MegaFon"],
-    "929": ["MegaFon"], "977": ["MegaFon"], "936": ["MegaFon"],
-    "937": ["MegaFon"], "938": ["MegaFon"], "928": ["MegaFon"],
-    "910": ["MTS"], "911": ["MTS"], "912": ["MTS"], "913": ["MTS"],
-    "914": ["MTS"], "915": ["MTS"], "916": ["MTS"], "917": ["MTS"],
-    "918": ["MTS"], "919": ["MTS"], "980": ["MTS"], "981": ["MTS"],
-    "982": ["MTS"], "983": ["MTS"], "985": ["MTS"], "988": ["MTS"],
-    "989": ["MTS"], "987": ["MTS"],
-    "950": ["Tele2"], "951": ["Tele2"], "952": ["Tele2"], "953": ["Tele2"],
-    "958": ["Tele2"], "960": ["Tele2"], "961": ["Tele2"], "962": ["Tele2"],
-    "963": ["Tele2"], "964": ["Tele2"], "965": ["Tele2"], "966": ["Tele2"],
-    "967": ["Tele2"], "968": ["Tele2"], "969": ["Tele2"], "991": ["Tele2"],
-    "993": ["Tele2"], "995": ["Tele2"], "996": ["Tele2"],
-    "999": ["Yota"], "997": ["Yota"], "992": ["Yota"],
+OPERATORS_BY_DEF = {
+    "903": "Beeline", "905": "Beeline", "906": "Beeline", "909": "Beeline",
+    "926": "MegaFon", "925": "MegaFon", "929": "MegaFon", "977": "MegaFon",
+    "936": "MegaFon", "937": "MegaFon", "938": "MegaFon", "928": "MegaFon",
+    "920": "MegaFon", "921": "MegaFon", "922": "MegaFon", "923": "MegaFon",
+    "924": "MegaFon", "927": "MegaFon",
+    "910": "MTS", "911": "MTS", "912": "MTS", "913": "MTS",
+    "914": "MTS", "915": "MTS", "916": "MTS", "917": "MTS",
+    "918": "MTS", "919": "MTS", "980": "MTS", "981": "MTS",
+    "982": "MTS", "983": "MTS", "985": "MTS", "988": "MTS",
+    "989": "MTS", "987": "MTS",
+    "950": "Tele2", "951": "Tele2", "952": "Tele2", "953": "Tele2",
+    "958": "Tele2", "960": "Tele2", "961": "Tele2", "962": "Tele2",
+    "963": "Tele2", "964": "Tele2", "965": "Tele2", "966": "Tele2",
+    "967": "Tele2", "968": "Tele2", "969": "Tele2", "991": "Tele2",
+    "993": "Tele2", "995": "Tele2", "996": "Tele2",
+    "999": "Yota", "997": "Yota", "992": "Yota", "995": "Yota",
 }
 
 
 def validate_phone(text: str) -> str | None:
-    """Извлекает и валидирует номер телефона."""
+    """Извлекает номер телефона."""
     if not text or not isinstance(text, str):
         return None
     digits = re.sub(r"[^\d+]", "", text)
@@ -71,16 +84,15 @@ def validate_phone(text: str) -> str | None:
     return digits
 
 
-def parse_phone(phone_raw: str) -> dict:
-    """Расширенный парсинг номера телефона."""
+def parse_phone_local(phone_raw: str) -> dict:
+    """Локальный парсинг номера (без API)."""
     result = {
         "valid": False, "possible": False,
-        "formatted": phone_raw, "international": phone_raw,
-        "national": phone_raw, "e164": phone_raw,
-        "country": "Не определено", "country_code": "Не определено",
-        "region": "Не определено", "carrier": "Не определено",
-        "type": "Не определено", "timezone": "Не определено",
-        "is_ru": False, "def_code": None, "operator_guess": None,
+        "international": phone_raw, "national": phone_raw,
+        "e164": phone_raw, "country": "Не определено",
+        "country_code": "Не определено", "region": "Не определено",
+        "carrier": "Не определено", "type": "Не определено",
+        "timezone": "Не определено", "def_code": None,
     }
 
     if not HAS_PHONENUMBERS:
@@ -91,7 +103,6 @@ def parse_phone(phone_raw: str) -> dict:
         parsed = phonenumbers.parse(phone_raw, None)
         result["possible"] = phonenumbers.is_possible_number(parsed)
         result["valid"] = phonenumbers.is_valid_number(parsed)
-
         result["national"] = phonenumbers.format_number(parsed, phonenumbers.PhoneNumberFormat.NATIONAL)
         result["international"] = phonenumbers.format_number(parsed, phonenumbers.PhoneNumberFormat.INTERNATIONAL)
         result["e164"] = phonenumbers.format_number(parsed, phonenumbers.PhoneNumberFormat.E164)
@@ -99,11 +110,11 @@ def parse_phone(phone_raw: str) -> dict:
         cc = phonenumbers.region_code_for_number(parsed)
         result["country_code"] = cc or "Не определено"
         result["country"] = geocoder.country_name_for_number(parsed, "ru") or "Не определено"
-        result["is_ru"] = cc == "RU"
         result["region"] = geocoder.description_for_number(parsed, "ru") or "Не определено"
 
         carr = carrier.name_for_number(parsed, "ru")
-        result["carrier"] = carr if carr else "Не определено"
+        if carr:
+            result["carrier"] = carr
 
         type_map = {
             phonenumbers.PhoneNumberType.MOBILE: "Мобильный",
@@ -119,14 +130,15 @@ def parse_phone(phone_raw: str) -> dict:
         }
         result["type"] = type_map.get(phonenumbers.number_type(parsed), "Не определено")
 
-        # РФ: определяем регион и оператора по DEF-коду
+        # РФ регион по DEF-коду
         if cc == "RU":
             digits_only = re.sub(r"\D", "", phone_raw)
             if len(digits_only) >= 4:
                 def_code = digits_only[1:4]
                 result["def_code"] = def_code
                 result["region"] = RU_REGIONS.get(def_code, f"Код DEF: {def_code}")
-                result["operator_guess"] = OPERATORS.get(def_code, [])
+                if not carr:
+                    result["carrier"] = OPERATORS_BY_DEF.get(def_code, "Не определено")
 
         tz = timezone.time_zones_for_number(parsed)
         result["timezone"] = ", ".join(tz) if tz else "Не определено"
@@ -140,171 +152,148 @@ def parse_phone(phone_raw: str) -> dict:
     return result
 
 
-def get_messenger_links(phone: str) -> dict:
-    """Ссылки на мессенджеры."""
-    digits = re.sub(r"[^\d]", "", phone)
-    return {
-        "Telegram": f"https://t.me/+{digits}",
-        "WhatsApp": f"https://wa.me/{digits}",
-        "Viber": f"viber://chat?number=%2B{digits}",
-        "IMO": f"https://imo.im/phone/{digits}",
-        "Signal": f"https://signal.me/#p/+{digits}",
-        "Threema": f"threema://compose?phone=+{digits}",
-    }
-
-
-def get_search_links(phone: str) -> dict:
-    """Ссылки для ручного поиска."""
-    digits = re.sub(r"[^\d]", "", phone)
-    encoded = quote(digits, safe="")
-    return {
-        "Поисковики": {
-            "Google": f"https://www.google.com/search?q={encoded}",
-            "Yandex": f"https://yandex.ru/search/?text={encoded}",
-            "Bing": f"https://www.bing.com/search?q={encoded}",
-            "DuckDuckGo": f"https://duckduckgo.com/?q={encoded}",
-        },
-        "Определители": {
-            "Truecaller": f"https://www.truecaller.com/search/ru/{encoded}",
-            "GetContact": "https://www.getcontact.com/",
-            "NumVerify": "https://numverify.com/",
-            "PhoneBook.cz": f"https://phonebook.cz/?query={encoded}",
-            "CallerID": f"https://callerid.ru/search/?q={encoded}",
-        },
-        "Доски объявлений": {
-            "Авито": f"https://www.avito.ru/?q={encoded}",
-            "Юла": f"https://youla.ru/?q={encoded}",
-            "Из рук в руки": f"https://www.irr.ru/?q={encoded}",
-        },
-        "Карты и справочники": {
-            "2GIS": f"https://2gis.ru/search?query={encoded}",
-            "Яндекс.Карты": f"https://yandex.ru/maps/?pt={encoded}",
-            "Zoon": f"https://zoon.ru/?s={encoded}",
-            "OrgPage": f"https://www.orgpage.ru/search/?q={encoded}",
-        },
-        "Банки (проверка имени)": {
-            "Сбербанк": "https://www.sberbank.ru/ru/person/dl_offices",
-            "Тинькофф": "https://www.tinkoff.ru/",
-            "Альфа-Банк": "https://alfabank.ru/",
-        },
-        "Соцсети": {
-            "VK": f"https://vk.com/search?c%5Bq%5D={encoded}&c%5Bsection%5D=auto",
-            "OK": f"https://ok.ru/search?st.cmd=sFriendSearch&st.query={encoded}",
-        },
-    }
-
-
-async def check_phone_api(phone: str) -> dict:
-    """Проверка через внешние API (опционально)."""
-    result = {
-        "abstract_api": None,
-        "numverify": None,
-        "error": None,
-    }
-
+async def query_phone_apis(phone: str, e164: str) -> dict:
+    """Запросы к реальным API для получения данных о номере."""
     import config
+    api_results = {}
 
-    # Abstract API — определение оператора и локации
+    # Abstract API — валидация и определение оператора
     if config.ABSTRACT_PHONE_API_KEY:
         try:
             import httpx
-            url = f"https://phonevalidation.abstractapi.com/v1/validate_phone?api_key={config.ABSTRACT_PHONE_API_KEY}&phone={phone}"
+            url = f"https://phonevalidation.abstractapi.com/v1/validate_phone"
+            params = {"api_key": config.ABSTRACT_PHONE_API_KEY, "phone": e164}
             async with httpx.AsyncClient(timeout=10) as client:
-                resp = await client.get(url)
+                resp = await client.get(url, params=params)
                 if resp.status_code == 200:
-                    result["abstract_api"] = resp.json()
+                    data = resp.json()
+                    api_results["abstract_api"] = {
+                        "valid": data.get("is_valid", False),
+                        "country": data.get("country", ""),
+                        "location": data.get("location", ""),
+                        "carrier": data.get("carrier", ""),
+                        "line_type": data.get("line_type", ""),
+                        "type": data.get("type", ""),
+                        "formatted": data.get("formatted", ""),
+                    }
         except Exception as e:
             log.debug(f"Abstract API error: {e}")
 
-    # NumVerify
+    # NumVerify — определение оператора и локации
     if config.NUMVERIFY_API_KEY:
         try:
             import httpx
-            url = f"http://apilayer.net/api/validate?access_key={config.NUMVERIFY_API_KEY}&number={phone}&format=1"
+            url = "http://apilayer.net/api/validate"
+            params = {"access_key": config.NUMVERIFY_API_KEY, "number": e164, "format": "1"}
             async with httpx.AsyncClient(timeout=10) as client:
-                resp = await client.get(url)
+                resp = await client.get(url, params=params)
                 if resp.status_code == 200:
-                    result["numverify"] = resp.json()
+                    data = resp.json()
+                    if not data.get("error"):
+                        api_results["numverify"] = {
+                            "valid": data.get("valid", False),
+                            "country": data.get("country_name", ""),
+                            "location": data.get("location", ""),
+                            "carrier": data.get("carrier", ""),
+                            "line_type": data.get("line_type", ""),
+                            "national_format": data.get("national_format", ""),
+                        }
         except Exception as e:
             log.debug(f"NumVerify error: {e}")
 
-    return result
+    # PhoneBook.cz — поиск в утечках
+    try:
+        import httpx
+        digits_only = re.sub(r"[^\d]", "", phone)
+        # PhoneBook.cz ищет по email, но может найти данные по номеру
+        url = f"https://phonebook.cz/api"
+        # Этот API требует email, пропускаем для телефона
+    except Exception:
+        pass
+
+    # Numlookup API — бесплатный
+    if hasattr(config, 'NUMLOOKUP_API_KEY') and getattr(config, 'NUMLOOKUP_API_KEY', ''):
+        try:
+            import httpx
+            url = f"https://numlookupapi.com/api/validate/{e164}"
+            params = {"apikey": config.NUMLOOKUP_API_KEY}
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.get(url, params=params)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    api_results["numlookup"] = {
+                        "valid": data.get("valid", False),
+                        "country": data.get("country_name", ""),
+                        "carrier": data.get("carrier", ""),
+                        "location": data.get("location", ""),
+                        "line_type": data.get("line_type", ""),
+                    }
+        except Exception as e:
+            log.debug(f"Numlookup API error: {e}")
+
+    return api_results
 
 
-def format_phone_report(phone_raw: str, api_data: dict | None = None) -> str:
-    """Формирует расширенный отчёт по номеру телефона."""
-    phone = validate_phone(phone_raw)
-    if not phone:
-        return "❌ Не удалось распознать номер.\n\nПример: <code>+79991234567</code>"
+async def search_phone_everywhere(phone: str) -> str:
+    """Полный поиск по номеру телефона с реальными данными."""
+    validated = validate_phone(phone)
+    if not validated:
+        return "❌ Неверный формат номера.\n\nПример: <code>+79991234567</code>"
 
-    data = parse_phone(phone)
-    messengers = get_messenger_links(phone)
-    search_links = get_search_links(phone)
+    # Локальный парсинг
+    local_data = parse_phone_local(validated)
 
+    # API запросы
+    e164 = local_data.get("e164", validated)
+    api_data = await query_phone_apis(validated, e164)
+
+    # Формируем отчёт
     report = f"📱 <b>Расширенный поиск по номеру</b>\n\n"
-    report += f"📞 <b>Международный:</b> <code>{data['international']}</code>\n"
-    report += f"📋 <b>Национальный:</b> <code>{data['national']}</code>\n"
-    report += f"📝 <b>E164:</b> <code>{data['e164']}</code>\n\n"
+    report += f"📞 <b>Международный:</b> <code>{local_data['international']}</code>\n"
+    report += f"📋 <b>Национальный:</b> <code>{local_data['national']}</code>\n"
+    report += f"📝 <b>E164:</b> <code>{local_data['e164']}</code>\n\n"
 
-    report += f"🌍 <b>Страна:</b> {data['country']} ({data['country_code']})\n"
-    report += f"📍 <b>Регион:</b> {data['region']}\n"
+    report += f"🌍 <b>Страна:</b> {local_data['country']}"
+    if local_data['country_code'] != "Не определено":
+        report += f" ({local_data['country_code']})"
+    report += "\n"
 
-    if data.get("def_code"):
-        report += f"🔢 <b>DEF-код:</b> {data['def_code']}\n"
+    report += f"📍 <b>Регион:</b> {local_data['region']}\n"
 
     # Оператор
-    carr = data.get("carrier", "Не определено")
-    guess = data.get("operator_guess", [])
-    if carr and carr != "Не определено":
-        report += f"📡 <b>Оператор:</b> {carr}\n"
-    elif guess:
-        report += f"📡 <b>Возможный оператор:</b> {', '.join(guess)}\n"
-    else:
-        report += f"📡 <b>Оператор:</b> Не определено\n"
+    carrier_val = local_data.get("carrier", "Не определено")
+    if carrier_val == "Не определено" and local_data.get("def_code"):
+        carrier_val = OPERATORS_BY_DEF.get(local_data["def_code"], "Не определено")
+    report += f"📡 <b>Оператор:</b> {carrier_val}\n"
+    report += f"📋 <b>Тип:</b> {local_data['type']}\n"
+    report += f"✅ <b>Действительный:</b> {'Да' if local_data['valid'] else 'Нет'}\n"
 
-    report += f"📋 <b>Тип:</b> {data['type']}\n"
-    report += f"✅ <b>Действительный:</b> {'Да' if data['valid'] else 'Нет'}\n"
-    report += f"🔮 <b>Возможный:</b> {'Да' if data['possible'] else 'Нет'}\n"
+    if local_data.get("timezone") and local_data["timezone"] != "Не определено":
+        report += f"🕐 <b>Часовой пояс:</b> {local_data['timezone']}\n"
 
-    if data.get("timezone") and data["timezone"] != "Не определено":
-        report += f"🕐 <b>Часовой пояс:</b> {data['timezone']}\n"
-
-    # API данные
+    # Данные из API
     if api_data:
-        aa = api_data.get("abstract_api")
-        if aa:
-            report += f"\n🔌 <b>Abstract API:</b>\n"
-            if aa.get("location"):
-                report += f"  📍 Локация: {aa['location']}\n"
-            if aa.get("carrier"):
-                report += f"  📡 Оператор: {aa['carrier']}\n"
-            if aa.get("line_type"):
-                report += f"  📋 Тип линии: {aa['line_type']}\n"
-
-        nv = api_data.get("numverify")
-        if nv:
-            report += f"\n🔌 <b>NumVerify:</b>\n"
-            if nv.get("location"):
-                report += f"  📍 Локация: {nv['location']}\n"
-            if nv.get("carrier"):
-                report += f"  📡 Оператор: {nv['carrier']}\n"
-            if nv.get("line_type"):
-                report += f"  📋 Тип: {nv['line_type']}\n"
-            if nv.get("country_name"):
-                report += f"  🌍 Страна: {nv['country_name']}\n"
+        for api_name, api_info in api_data.items():
+            report += f"\n🔌 <b>{api_name.replace('_', ' ').title()}:</b>\n"
+            if api_info.get("carrier") and api_info["carrier"] != local_data["carrier"]:
+                report += f"  📡 Оператор: {api_info['carrier']}\n"
+            if api_info.get("location"):
+                report += f"  📍 Локация: {api_info['location']}\n"
+            if api_info.get("line_type"):
+                report += f"  📋 Тип линии: {api_info['line_type']}\n"
+            if api_info.get("country") and api_info["country"] != local_data["country"]:
+                report += f"  🌍 Страна: {api_info['country']}\n"
+            if api_info.get("formatted"):
+                report += f"  📋 Формат: {api_info['formatted']}\n"
 
     # Мессенджеры
-    report += f"\n🔗 <b>Мессенджеры:</b>\n"
-    for name, url in messengers.items():
-        report += f"• <a href=\"{url}\">{name}</a>\n"
+    digits_only = re.sub(r"[^\d]", "", validated)
+    report += f"\n🔗 <b>Мессенджеры (прямые ссылки):</b>\n"
+    report += f"• Telegram: <a href=\"https://t.me/+{digits_only}\">Открыть профиль</a>\n"
+    report += f"• WhatsApp: <a href=\"https://wa.me/{digits_only}\">Открыть чат</a>\n"
+    report += f"• Viber: <a href=\"viber://chat?number=%2B{digits_only}\">Открыть чат</a>\n"
+    report += f"• Signal: <a href=\"https://signal.me/#p/+{digits_only}\">Открыть профиль</a>\n"
 
-    # Ссылки для поиска
-    report += f"\n🔎 <b>Сервисы для поиска:</b>\n"
-    for category, links in search_links.items():
-        report += f"\n<b>{category}:</b>\n"
-        for name, url in links.items():
-            report += f"• <a href=\"{url}\">{name}</a>\n"
-
-    report += "\n💡 <i>Нажмите на ссылку для поиска дополнительной информации</i>"
+    report += "\n💡 <i>Данные собраны из открытых источников и API</i>"
 
     return report

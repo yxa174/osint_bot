@@ -1,4 +1,4 @@
-"""OSINT Telegram Bot — расширенный поиск по открытым источникам."""
+"""OSINT Telegram Bot — поиск данных из реальных источников."""
 
 import logging
 import re
@@ -10,12 +10,12 @@ from telegram.ext import (
 )
 
 import config
-from modules.phone import format_phone_report, validate_phone, check_phone_api
+from modules.phone import search_phone_everywhere, validate_phone
 from modules.username import search_username, format_username_report, validate_username
-from modules.email import format_email_report, validate_email, check_email_breaches
-from modules.name import format_name_report, validate_name
+from modules.email import search_email_everywhere, validate_email
+from modules.name import search_name_everywhere, validate_name
+from modules.car import search_car_everywhere, validate_plate, validate_vin
 from modules.image import format_image_report
-from modules.car import format_car_report, validate_plate, validate_vin
 
 logging.basicConfig(
     level=logging.INFO,
@@ -24,23 +24,23 @@ logging.basicConfig(
 )
 log = logging.getLogger("OSINTBot")
 
-HELP_TEXT = """🔍 <b>OSINT Bot — расширенный поиск</b>
+HELP_TEXT = """🔍 <b>OSINT Bot — поиск из реальных источников</b>
 
-Выберите тип поиска или отправьте данные напрямую:
+Бот <b>сам собирает данные</b> из API и открытых источников:
 
-📱 <b>Телефон</b> — оператор, регион, мессенджеры, 10+ сервисов
-👤 <b>Username</b> — 60+ платформ (TG, IG, GitHub, VK, X и др.)
-📧 <b>Email</b> — провайдер, утечки HIBP, Gravatar, экосистемы
-📝 <b>ФИО</b> — соцсети, реестры, суды, ФССП, транслитерация
-🚗 <b>Авто</b> — госномер/VIN, история, штрафы, залоги
-📷 <b>Фото (URL)</b> — обратный поиск (Google, Yandex, TinEye)
+📱 <b>Телефон</b> — оператор, регион, мессенджеры, API-данные
+👤 <b>Username</b> — проверка на 60+ платформах (реальные HTTP-запросы)
+📧 <b>Email</b> — репутация, утечки HIBP, Gravatar, Hunter.io, EmailRep
+📝 <b>ФИО</b> — DuckDuckGo, Wikipedia (RU/EN), транслитерация
+🚗 <b>Авто</b> — VIN-декодер (NHTSA), регион по госномеру
+📷 <b>Фото (URL)</b> — ссылки на обратный поиск
 
 <b>Форматы:</b>
 • Телефон: +79991234567
 • Username: durov
 • Email: user@gmail.com
 • ФИО: Иванов Иван Иванович
-• Авто: А123БВ777 или VIN
+• Авто: А123БВ777 или XTA210930Y2618055
 • Фото: https://example.com/photo.jpg"""
 
 
@@ -56,7 +56,7 @@ def get_main_keyboard() -> InlineKeyboardMarkup:
         ],
         [
             InlineKeyboardButton("🚗 Авто", callback_data="search_car"),
-            InlineKeyboardButton("📷 Фото (URL)", callback_data="search_image"),
+            InlineKeyboardButton("📷 Фото", callback_data="search_image"),
         ],
         [
             InlineKeyboardButton("❓ Помощь", callback_data="help"),
@@ -123,7 +123,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     log.info(f"Поиск ({search_type}): {text}")
-    msg = await update.message.reply_text("⏳ Выполняется поиск...")
+    msg = await update.message.reply_text("⏳ Выполняется поиск, собираю данные...")
 
     try:
         if search_type == "phone":
@@ -133,9 +133,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif search_type == "email":
             result = await handle_email_search(text)
         elif search_type == "name":
-            result = handle_name_search(text)
+            result = await handle_name_search(text)
         elif search_type == "car":
-            result = handle_car_search(text)
+            result = await handle_car_search(text)
         elif search_type == "image":
             result = handle_image_search(text)
         else:
@@ -161,22 +161,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def handle_phone_search(text: str) -> str:
-    phone = validate_phone(text)
-    if not phone:
-        return "❌ Неверный формат номера.\n\nПример: <code>+79991234567</code>"
-
-    # Параллельный запрос к API
-    api_task = check_phone_api(phone)
-    report_task = asyncio.get_event_loop().run_in_executor(None, format_phone_report, phone)
-
-    api_data, report = await asyncio.gather(api_task, report_task, return_exceptions=True)
-
-    if isinstance(api_data, Exception):
-        api_data = None
-    if isinstance(report, Exception):
-        return f"❌ Ошибка: {report}"
-
-    return format_phone_report(phone, api_data if isinstance(api_data, dict) else None)
+    return await search_phone_everywhere(text)
 
 
 async def handle_username_search(text: str) -> str:
@@ -189,32 +174,24 @@ async def handle_username_search(text: str) -> str:
 
 
 async def handle_email_search(text: str) -> str:
-    email = validate_email(text)
-    if not email:
-        return "❌ Неверный формат email.\n\nПример: <code>user@gmail.com</code>"
-
-    breach_data = None
-    if config.HIBP_API_KEY:
-        breach_data = await check_email_breaches(email, config.HIBP_API_KEY)
-
-    return format_email_report(email, breach_data)
+    return await search_email_everywhere(text)
 
 
-def handle_name_search(text: str) -> str:
+async def handle_name_search(text: str) -> str:
     name_data = validate_name(text)
     if not name_data:
         return "❌ Неверный формат.\n\nПример: <code>Иванов Иван Иванович</code>"
-    return format_name_report(name_data)
+    return await search_name_everywhere(name_data)
 
 
-def handle_car_search(text: str) -> str:
+async def handle_car_search(text: str) -> str:
     plate = validate_plate(text)
     vin = validate_vin(text)
 
     if not plate and not vin:
         return "❌ Неверный формат.\n\nПримеры:\n<code>А123БВ777</code> (госномер)\n<code>XTA210930Y2618055</code> (VIN)"
 
-    return format_car_report(plate, vin)
+    return await search_car_everywhere(plate, vin)
 
 
 def handle_image_search(text: str) -> str:
