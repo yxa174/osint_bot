@@ -1,23 +1,21 @@
-"""OSINT Telegram Bot — поиск информации по открытым источникам."""
+"""OSINT Telegram Bot — расширенный поиск по открытым источникам."""
 
 import logging
 import re
+import asyncio
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
-    Application,
-    CommandHandler,
-    MessageHandler,
-    CallbackQueryHandler,
-    ContextTypes,
-    filters,
+    Application, CommandHandler, MessageHandler,
+    CallbackQueryHandler, ContextTypes, filters,
 )
 
 import config
-from modules.phone import format_phone_report, validate_phone
+from modules.phone import format_phone_report, validate_phone, check_phone_api
 from modules.username import search_username, format_username_report, validate_username
 from modules.email import format_email_report, validate_email, check_email_breaches
 from modules.name import format_name_report, validate_name
 from modules.image import format_image_report
+from modules.car import format_car_report, validate_plate, validate_vin
 
 logging.basicConfig(
     level=logging.INFO,
@@ -26,26 +24,27 @@ logging.basicConfig(
 )
 log = logging.getLogger("OSINTBot")
 
-HELP_TEXT = """🔍 <b>OSINT Bot — поиск по открытым источникам</b>
+HELP_TEXT = """🔍 <b>OSINT Bot — расширенный поиск</b>
 
 Выберите тип поиска или отправьте данные напрямую:
 
-📱 <b>Телефон</b> — информация, оператор, мессенджеры
-👤 <b>Username</b> — поиск по соцсетям и платформам
-📧 <b>Email</b> — провайдер, утечки, Gravatar
-📝 <b>ФИО</b> — ссылки для поиска человека
-📷 <b>Фото (URL)</b> — обратный поиск изображения
+📱 <b>Телефон</b> — оператор, регион, мессенджеры, 10+ сервисов
+👤 <b>Username</b> — 60+ платформ (TG, IG, GitHub, VK, X и др.)
+📧 <b>Email</b> — провайдер, утечки HIBP, Gravatar, экосистемы
+📝 <b>ФИО</b> — соцсети, реестры, суды, ФССП, транслитерация
+🚗 <b>Авто</b> — госномер/VIN, история, штрафы, залоги
+📷 <b>Фото (URL)</b> — обратный поиск (Google, Yandex, TinEye)
 
 <b>Форматы:</b>
 • Телефон: +79991234567
 • Username: durov
 • Email: user@gmail.com
 • ФИО: Иванов Иван Иванович
+• Авто: А123БВ777 или VIN
 • Фото: https://example.com/photo.jpg"""
 
 
 def get_main_keyboard() -> InlineKeyboardMarkup:
-    """Главное меню с инлайн-кнопками."""
     keyboard = [
         [
             InlineKeyboardButton("📱 Телефон", callback_data="search_phone"),
@@ -56,6 +55,7 @@ def get_main_keyboard() -> InlineKeyboardMarkup:
             InlineKeyboardButton("📝 ФИО", callback_data="search_name"),
         ],
         [
+            InlineKeyboardButton("🚗 Авто", callback_data="search_car"),
             InlineKeyboardButton("📷 Фото (URL)", callback_data="search_image"),
         ],
         [
@@ -66,65 +66,52 @@ def get_main_keyboard() -> InlineKeyboardMarkup:
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик /start."""
     user = update.effective_user
     log.info(f"Пользователь {user.id} (@{user.username}) запустил бота")
     await update.message.reply_text(
-        HELP_TEXT,
-        reply_markup=get_main_keyboard(),
-        parse_mode="HTML",
-        disable_web_page_preview=True,
+        HELP_TEXT, reply_markup=get_main_keyboard(),
+        parse_mode="HTML", disable_web_page_preview=True,
     )
 
 
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик /help."""
     await update.message.reply_text(
-        HELP_TEXT,
-        reply_markup=get_main_keyboard(),
-        parse_mode="HTML",
-        disable_web_page_preview=True,
+        HELP_TEXT, reply_markup=get_main_keyboard(),
+        parse_mode="HTML", disable_web_page_preview=True,
     )
 
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик нажатий инлайн-кнопок."""
     query = update.callback_query
     await query.answer()
-
     action = query.data
 
     if action == "help":
         await query.edit_message_text(
-            HELP_TEXT,
-            reply_markup=get_main_keyboard(),
-            parse_mode="HTML",
-            disable_web_page_preview=True,
+            HELP_TEXT, reply_markup=get_main_keyboard(),
+            parse_mode="HTML", disable_web_page_preview=True,
         )
     elif action.startswith("search_"):
         search_type = action.replace("search_", "")
         prompts = {
-            "phone": "📱 <b>Поиск по телефону</b>\n\nОтправьте номер телефона:\n<code>+79991234567</code>",
+            "phone": "📱 <b>Поиск по телефону</b>\n\nОтправьте номер:\n<code>+79991234567</code>",
             "username": "👤 <b>Поиск по username</b>\n\nОтправьте никнейм:\n<code>durov</code>",
-            "email": "📧 <b>Поиск по email</b>\n\nОтправьте email адрес:\n<code>user@gmail.com</code>",
+            "email": "📧 <b>Поиск по email</b>\n\nОтправьте email:\n<code>user@gmail.com</code>",
             "name": "📝 <b>Поиск по ФИО</b>\n\nОтправьте ФИО:\n<code>Иванов Иван Иванович</code>",
-            "image": "📷 <b>Поиск по фото</b>\n\nОтправьте URL изображения:\n<code>https://example.com/photo.jpg</code>",
+            "car": "🚗 <b>Поиск по авто</b>\n\nОтправьте госномер или VIN:\n<code>А123БВ777</code>\n<code>XTA210930Y2618055</code>",
+            "image": "📷 <b>Поиск по фото</b>\n\nОтправьте URL:\n<code>https://example.com/photo.jpg</code>",
         }
         prompt = prompts.get(search_type, "Выберите тип поиска:")
         context.user_data["pending_search"] = search_type
 
-        keyboard = [
-            [InlineKeyboardButton("↩️ Назад", callback_data="help")],
-        ]
+        keyboard = [[InlineKeyboardButton("↩️ Назад", callback_data="help")]]
         await query.edit_message_text(
-            prompt,
-            reply_markup=InlineKeyboardMarkup(keyboard),
+            prompt, reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode="HTML",
         )
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик входящих сообщений."""
     text = update.message.text.strip()
     search_type = context.user_data.get("pending_search")
 
@@ -136,17 +123,19 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     log.info(f"Поиск ({search_type}): {text}")
-    await update.message.reply_text("⏳ Выполняется поиск...")
+    msg = await update.message.reply_text("⏳ Выполняется поиск...")
 
     try:
         if search_type == "phone":
-            result = handle_phone_search(text)
+            result = await handle_phone_search(text)
         elif search_type == "username":
             result = await handle_username_search(text)
         elif search_type == "email":
             result = await handle_email_search(text)
         elif search_type == "name":
             result = handle_name_search(text)
+        elif search_type == "car":
+            result = handle_car_search(text)
         elif search_type == "image":
             result = handle_image_search(text)
         else:
@@ -157,13 +146,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             for chunk in [result[i:i+4000] for i in range(0, len(result), 4000)]:
                 await update.message.reply_text(chunk, parse_mode="HTML", disable_web_page_preview=True)
         else:
-            await update.message.reply_text(result, parse_mode="HTML", disable_web_page_preview=True)
+            await msg.edit_text(result, parse_mode="HTML", disable_web_page_preview=True)
 
         log.info(f"Успешный поиск ({search_type}) для пользователя {update.effective_user.id}")
 
     except Exception as e:
         log.error(f"Ошибка при поиске ({search_type}): {e}")
-        await update.message.reply_text(
+        await msg.edit_text(
             f"❌ Произошла ошибка:\n<code>{str(e)}</code>\n\nПопробуйте позже.",
             parse_mode="HTML",
         )
@@ -171,26 +160,35 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.pop("pending_search", None)
 
 
-def handle_phone_search(text: str) -> str:
-    """Поиск по телефону."""
+async def handle_phone_search(text: str) -> str:
     phone = validate_phone(text)
     if not phone:
         return "❌ Неверный формат номера.\n\nПример: <code>+79991234567</code>"
-    return format_phone_report(phone)
+
+    # Параллельный запрос к API
+    api_task = check_phone_api(phone)
+    report_task = asyncio.get_event_loop().run_in_executor(None, format_phone_report, phone)
+
+    api_data, report = await asyncio.gather(api_task, report_task, return_exceptions=True)
+
+    if isinstance(api_data, Exception):
+        api_data = None
+    if isinstance(report, Exception):
+        return f"❌ Ошибка: {report}"
+
+    return format_phone_report(phone, api_data if isinstance(api_data, dict) else None)
 
 
 async def handle_username_search(text: str) -> str:
-    """Поиск по username."""
     username = validate_username(text)
     if not username:
-        return "❌ Неверный формат username.\n\nДопустимы: буквы, цифры, _ (5-32 символа)\nПример: <code>durov</code>"
+        return "❌ Неверный формат username.\n\nДопустимы: буквы, цифры, _ (3-50 символов)\nПример: <code>durov</code>"
 
     result = await search_username(username)
     return format_username_report(result)
 
 
 async def handle_email_search(text: str) -> str:
-    """Поиск по email."""
     email = validate_email(text)
     if not email:
         return "❌ Неверный формат email.\n\nПример: <code>user@gmail.com</code>"
@@ -203,15 +201,23 @@ async def handle_email_search(text: str) -> str:
 
 
 def handle_name_search(text: str) -> str:
-    """Поиск по ФИО."""
     name_data = validate_name(text)
     if not name_data:
         return "❌ Неверный формат.\n\nПример: <code>Иванов Иван Иванович</code>"
     return format_name_report(name_data)
 
 
+def handle_car_search(text: str) -> str:
+    plate = validate_plate(text)
+    vin = validate_vin(text)
+
+    if not plate and not vin:
+        return "❌ Неверный формат.\n\nПримеры:\n<code>А123БВ777</code> (госномер)\n<code>XTA210930Y2618055</code> (VIN)"
+
+    return format_car_report(plate, vin)
+
+
 def handle_image_search(text: str) -> str:
-    """Поиск по изображению."""
     url_pattern = r"https?://[^\s]+"
     match = re.search(url_pattern, text)
     if not match:
@@ -220,7 +226,6 @@ def handle_image_search(text: str) -> str:
 
 
 def main():
-    """Запуск бота."""
     if not config.BOT_TOKEN or config.BOT_TOKEN == "your_telegram_bot_token_here":
         log.error("❌ Укажите BOT_TOKEN в .env файле!")
         return
